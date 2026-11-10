@@ -1,0 +1,255 @@
+/**
+ * main.js
+ * 配線：3D表示 → 会話（テキスト）／視覚連動（カメラ→Gemini）→ 読み上げ＋モーション。
+ * Phase 3（ハイブリッド化・仮説A）：
+ *  - カメラ映像を端末内の COCO-SSD で常時検知し、結果と推論msを即表示する
+ *  - 新しい物体クラスが現れたら、そのときだけ Gemini に画像を送って声かけさせる
+ *  - ローカル検知ms と Gemini応答ms を並べて表示し、before/after を比較できるようにする
+ */
+import { createScene, tryLoadAvatarModel } from './ar-viewer/scene.js';
+import { createPlaceholderAvatar } from './ar-viewer/avatar.js';
+import { CameraManager } from './ar-viewer/camera.js';
+import {
+  generateReply,
+  generateVisionReply,
+  getApiKey,
+  setApiKey,
+} from './ai-agent-engine/gemini-client.js';
+import { LocalDetector, labelJa } from './ai-agent-engine/local-detector.js';
+import { speak } from './ai-agent-engine/speech.js';
+import { MotionController } from './motion-controller/motion-controller.js';
+
+const container = document.getElementById('canvas-container');
+const replyBox = document.getElementById('reply-box');
+const userInput = document.getElementById('user-input');
+const talkButton = document.getElementById('talk-button');
+const statusLine = document.getElementById('status-line');
+const emotionBadge = document.getElementById('emotion-badge');
+const apiKeyInput = document.getElementById('api-key-input');
+const saveKeyButton = document.getElementById('save-key-button');
+const cameraVideo = document.getElementById('camera-video');
+const cameraToggleButton = document.getElementById('camera-toggle-button');
+const visionButton = document.getElementById('vision-button');
+const autoVisionCheckbox = document.getElementById('auto-vision');
+const detectStatus = document.getElementById('detect-status');
+const detectList = document.getElementById('detect-list');
+const latencyCompare = document.getElementById('latency-compare');
+
+const { renderer, scene, camera } = createScene(container);
+
+const placeholder = createPlaceholderAvatar();
+scene.add(placeholder.group);
+const motion = new MotionController(placeholder);
+
+tryLoadAvatarModel(scene).then((model) => {
+  if (!model) return;
+  scene.remove(placeholder.group);
+  statusLine.textContent = 'GLTFモデル（assets/models/avatar.glb）を読み込みました。';
+});
+
+function loop(now) {
+  motion.update(now);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// --- 遅延の比較表示（仮説Aの検証データ） ---
+let lastLocalMs = null;
+let lastGeminiMs = null;
+function updateLatencyCompare() {
+  const local = lastLocalMs !== null ? `ローカル検知: ${Math.round(lastLocalMs)} ms` : 'ローカル検知: -';
+  const gemini = lastGeminiMs !== null ? `Gemini応答: ${Math.round(lastGeminiMs)} ms` : 'Gemini応答: -';
+  latencyCompare.textContent = `${local} ／ ${gemini}（ベースライン実測 11,442 ms）`;
+}
+
+function showReply(reply, latencyMs) {
+  replyBox.textContent = reply.text;
+  emotionBadge.textContent = `emotion: ${reply.emotion}`;
+  motion.play(reply.emotion);
+  speak(reply.text);
+  if (typeof latencyMs === 'number') {
+    lastGeminiMs = latencyMs;
+    updateLatencyCompare();
+  }
+  const latency = typeof latencyMs === 'number' ? `（応答 ${Math.round(latencyMs)} ms）` : '';
+  statusLine.textContent = reply.source === 'mock'
+    ? `モック応答で動作しています（APIキー未設定）${latency}`
+    : `${reply.source} で応答しました${latency}`;
+}
+
+apiKeyInput.value = getApiKey();
+saveKeyButton.addEventListener('click', () => {
+  setApiKey(apiKeyInput.value.trim());
+  statusLine.textContent = 'APIキーを保存しました。';
+});
+
+talkButton.addEventListener('click', async () => {
+  const text = userInput.value.trim() || 'こんにちは';
+  talkButton.disabled = true;
+  statusLine.textContent = '考え中…';
+  const started = performance.now();
+  try {
+    const reply = await generateReply(text);
+    showReply(reply, performance.now() - started);
+  } catch (err) {
+    statusLine.textContent = `エラー: ${err.message}`;
+  } finally {
+    talkButton.disabled = false;
+  }
+});
+userInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') talkButton.click();
+});
+
+// --- カメラと視覚連動（Gemini） ---
+const cameraManager = new CameraManager(cameraVideo);
+let autoTimer = null;
+let geminiBusy = false;
+
+async function runVision(contextText = '') {
+  if (geminiBusy) return;
+  const frame = cameraManager.captureFrame();
+  if (!frame) {
+    statusLine.textContent = 'フレームを取得できませんでした（カメラ準備中）。';
+    return;
+  }
+  geminiBusy = true;
+  visionButton.disabled = true;
+  statusLine.textContent = '空間を見ています…';
+  const started = performance.now();
+  try {
+    const userText = userInput.value.trim() || contextText;
+    const reply = await generateVisionReply(frame, userText);
+    showReply(reply, performance.now() - started);
+  } catch (err) {
+    statusLine.textContent = `エラー: ${err.message}`;
+  } finally {
+    geminiBusy = false;
+    visionButton.disabled = false;
+  }
+}
+visionButton.addEventListener('click', () => runVision());
+
+function startAutoVision() {
+  stopAutoVision();
+  autoTimer = setInterval(() => runVision(), 10000);
+}
+function stopAutoVision() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = null;
+}
+autoVisionCheckbox.addEventListener('change', () => {
+  if (autoVisionCheckbox.checked) {
+    startAutoVision();
+    statusLine.textContent = '自動モード: 10秒ごとに空間を見ます。';
+  } else {
+    stopAutoVision();
+  }
+});
+
+// --- ローカル検知（COCO-SSD）：常時・即時、Geminiはトリガー時のみ ---
+const detector = new LocalDetector();
+const seenClasses = new Set();
+let detectTimer = null;
+let detecting = false;
+let lastAutoTriggerAt = 0;
+const AUTO_TRIGGER_COOLDOWN_MS = 20000;
+const SCORE_THRESHOLD = 0.55;
+
+function renderDetections(predictions, latencyMs) {
+  lastLocalMs = latencyMs;
+  updateLatencyCompare();
+  detectStatus.textContent = `検知中（推論 ${Math.round(latencyMs)} ms）`;
+  detectList.innerHTML = '';
+  if (predictions.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = '検出なし';
+    detectList.appendChild(li);
+    return;
+  }
+  for (const p of predictions) {
+    const li = document.createElement('li');
+    li.textContent = `${labelJa(p.class)} ${(p.score * 100).toFixed(0)}%`;
+    detectList.appendChild(li);
+  }
+}
+
+async function detectionTick() {
+  if (detecting || !cameraManager.isRunning) return;
+  detecting = true;
+  try {
+    const { predictions, latencyMs } = await detector.detect(cameraVideo);
+    const reliable = predictions.filter((p) => p.score >= SCORE_THRESHOLD);
+    renderDetections(reliable, latencyMs);
+
+    const newClasses = reliable.filter((p) => !seenClasses.has(p.class));
+    newClasses.forEach((p) => seenClasses.add(p.class));
+    if (newClasses.length > 0) {
+      // ローカル側の即時反応（LLMを待たない）
+      motion.play('pointing');
+      const names = newClasses.map((p) => labelJa(p.class)).join('、');
+      detectStatus.textContent = `新しい物体を検知: ${names}（推論 ${Math.round(latencyMs)} ms）`;
+      // Geminiへはトリガー時のみ（クールダウン付き）
+      const now = Date.now();
+      if (!geminiBusy && now - lastAutoTriggerAt >= AUTO_TRIGGER_COOLDOWN_MS) {
+        lastAutoTriggerAt = now;
+        runVision(`（ローカル検知で「${names}」が新しく視界に入りました）`);
+      }
+    }
+  } catch (err) {
+    detectStatus.textContent = `ローカル検知エラー: ${err.message}`;
+    stopDetection();
+  } finally {
+    detecting = false;
+  }
+}
+
+async function startDetection() {
+  detectStatus.textContent = '検知モデルを読み込み中…（初回のみ数秒かかります）';
+  try {
+    await detector.load();
+  } catch (err) {
+    detectStatus.textContent = `検知モデルを読み込めませんでした: ${err.message}`;
+    return;
+  }
+  seenClasses.clear();
+  detectStatus.textContent = '検知中…';
+  stopDetection();
+  detectTimer = setInterval(detectionTick, 1500);
+  detectionTick();
+}
+function stopDetection() {
+  if (detectTimer) clearInterval(detectTimer);
+  detectTimer = null;
+}
+
+cameraToggleButton.addEventListener('click', async () => {
+  if (cameraManager.isRunning) {
+    cameraManager.stop();
+    stopDetection();
+    document.body.classList.remove('camera-on');
+    cameraToggleButton.textContent = 'カメラを開始';
+    visionButton.disabled = true;
+    autoVisionCheckbox.disabled = true;
+    autoVisionCheckbox.checked = false;
+    stopAutoVision();
+    detectStatus.textContent = 'カメラ停止中';
+    detectList.innerHTML = '';
+    statusLine.textContent = 'カメラを停止しました。';
+    return;
+  }
+  try {
+    await cameraManager.start();
+    document.body.classList.add('camera-on');
+    cameraToggleButton.textContent = 'カメラを停止';
+    visionButton.disabled = false;
+    autoVisionCheckbox.disabled = false;
+    statusLine.textContent = 'カメラを開始しました。ローカル検知が常時動き、新しい物体のときだけGeminiに聞きます。';
+    startDetection();
+  } catch (err) {
+    statusLine.textContent = `カメラを開始できませんでした: ${err.message}（localhost / HTTPS が必要です）`;
+  }
+});
+
+updateLatencyCompare();

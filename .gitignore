@@ -1,0 +1,12 @@
+# APIキーやローカル設定はコミットしない
+.env
+*.local
+
+# 依存・ビルド生成物（現状は未使用だが将来用）
+node_modules/
+dist/
+
+# OS・エディタ
+.DS_Store
+Thumbs.db
+.vscode/

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spatial AI NPC — Phase 1</title>
+  <link rel="stylesheet" href="./css/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Spatial AI NPC</h1>
+    <p class="subtitle">物理空間を認識して自律行動する WebAR エージェント（Phase 3: ハイブリッド化）</p>
+  </header>
+
+  <main>
+    <section id="stage">
+      <video id="camera-video" autoplay playsinline muted></video>
+      <div id="canvas-container"></div>
+      <div id="emotion-badge">emotion: idle</div>
+    </section>
+
+    <section id="camera-panel">
+      <button id="camera-toggle-button">カメラを開始</button>
+      <button id="vision-button" disabled>いまの様子を見て話す</button>
+      <label class="auto-label">
+        <input type="checkbox" id="auto-vision" disabled /> 10秒ごとに自動で見る
+      </label>
+    </section>
+
+    <section id="detect-panel">
+      <h3>ローカル検知（端末内・即時）</h3>
+      <div id="detect-status">カメラ開始後に自動で始まります</div>
+      <ul id="detect-list"></ul>
+      <div id="latency-compare"></div>
+    </section>
+
+    <section id="chat-panel">
+      <div id="reply-box">エージェントの返答がここに表示されます。</div>
+      <div class="input-row">
+        <input id="user-input" type="text" placeholder="エージェントへのメッセージ（例：こんにちは）" />
+        <button id="talk-button">話しかける</button>
+      </div>
+      <details id="settings">
+        <summary>設定（Gemini API キー）</summary>
+        <p>キーを設定すると実APIで応答します。未設定の場合はモック応答で動作確認できます。キーはブラウザ内にのみ保存されます。</p>
+        <input id="api-key-input" type="password" placeholder="Gemini API key" />
+        <button id="save-key-button">保存</button>
+      </details>
+      <p id="status-line"></p>
+    </section>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

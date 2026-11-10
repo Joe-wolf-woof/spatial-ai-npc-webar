@@ -1,0 +1,116 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", sans-serif;
+  background: #10131a;
+  color: #e8ecf3;
+}
+header { padding: 16px 20px 4px; }
+h1 { margin: 0; font-size: 22px; }
+.subtitle { margin: 4px 0 0; color: #9aa7bd; font-size: 13px; }
+main { padding: 12px 20px 24px; max-width: 960px; margin: 0 auto; }
+
+#stage { position: relative; height: 420px; border-radius: 12px; overflow: hidden; }
+#camera-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: none;
+}
+#canvas-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 50% 30%, #2a3348, #141926);
+}
+#camera-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.auto-label { font-size: 13px; color: #9aa7bd; }
+#detect-panel {
+  margin-top: 14px;
+  background: #1c2436;
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+#detect-panel h3 { margin: 0 0 6px; font-size: 14px; color: #9fd0a5; }
+#detect-status { font-size: 13px; color: #cfe3d3; min-height: 18px; }
+#detect-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+#detect-list li {
+  background: #27324a;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+#latency-compare { font-size: 12px; color: #8fa3c8; font-family: monospace; }
+/* カメラ使用中はステージ背景を透明にし、映像の上にアバターを重ねる */
+body.camera-on #canvas-container { background: transparent; }
+body.camera-on #camera-video { display: block; }
+#canvas-container canvas { display: block; }
+#emotion-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(10, 14, 22, 0.72);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #b9f3d0;
+}
+
+#chat-panel { margin-top: 14px; }
+#reply-box {
+  min-height: 56px;
+  background: #1a2130;
+  border: 1px solid #2b364d;
+  border-radius: 10px;
+  padding: 12px 14px;
+  line-height: 1.6;
+}
+.input-row { display: flex; gap: 8px; margin-top: 10px; }
+#user-input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #2b364d;
+  background: #0e1219;
+  color: #e8ecf3;
+  font-size: 14px;
+}
+button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+button:hover { background: #2f6fd6; }
+button:disabled { background: #55617a; cursor: wait; }
+
+#settings { margin-top: 12px; color: #9aa7bd; font-size: 13px; }
+#settings input {
+  width: 320px;
+  max-width: 70%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #2b364d;
+  background: #0e1219;
+  color: #e8ecf3;
+}
+#status-line { min-height: 18px; color: #8fd0a8; font-size: 12px; }
