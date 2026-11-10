@@ -96,7 +96,9 @@ async function requestWithFallback(parts) {
       return reply;
     } catch (err) {
       lastError = err;
-      if (err.status !== 404) throw err; // 404（モデル不可）だけ次候補を試す
+      // 404（モデル不可）・429（レート制限）・503（高負荷）は別モデルで再試行する。
+      // それ以外（400やキー不正など）は即座に投げる。
+      if (![404, 429, 503].includes(err.status)) throw err;
     }
   }
   throw lastError;
