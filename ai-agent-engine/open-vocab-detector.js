@@ -25,13 +25,14 @@ export const PRESET_LABELS = [
   { en: 'a dog', ja: '犬' },
 ];
 
-const SCORE_THRESHOLD = 0.15;
+const SCORE_THRESHOLD = 0.10;
 const FRAME_MAX_WIDTH = 640;
 
 export class OpenVocabDetector {
   constructor() {
     this.detector = null;
     this.loadPromise = null;
+    this.backend = null; // 'WebGPU' | 'WASM'
     this.frameCanvas = document.createElement('canvas');
   }
 
@@ -42,12 +43,29 @@ export class OpenVocabDetector {
       this.loadPromise = (async () => {
         if (onProgress) onProgress('Transformers.js を読み込み中…');
         const { pipeline } = await import(/* @vite-ignore */ TRANSFORMERS_URL);
-        if (onProgress) onProgress('OWL-ViT モデルをダウンロード中…（初回のみ約155MB）');
-        this.detector = await pipeline('zero-shot-object-detection', MODEL_ID, {
-          dtype: 'q8',
-        });
-        if (onProgress) onProgress('OWL-ViT 準備完了');
-        return this.detector;
+        // まず WebGPU（fp16）で高速化を試し、ダメなら WASM（q8）へフォールバックする。
+        // スマホの WASM 推論は 18 秒超の実測があり、そのままでは中間層として使えないため。
+        const attempts = [
+          { device: 'webgpu', dtype: 'fp16', name: 'WebGPU' },
+          { device: 'wasm', dtype: 'q8', name: 'WASM' },
+        ];
+        let lastError = null;
+        for (const attempt of attempts) {
+          try {
+            if (onProgress) onProgress(`OWL-ViT モデルを読み込み中…（${attempt.name}、初回は約155MB）`);
+            this.detector = await pipeline('zero-shot-object-detection', MODEL_ID, {
+              device: attempt.device,
+              dtype: attempt.dtype,
+            });
+            this.backend = attempt.name;
+            if (onProgress) onProgress(`OWL-ViT 準備完了（${attempt.name}）`);
+            return this.detector;
+          } catch (err) {
+            lastError = err;
+            this.detector = null;
+          }
+        }
+        throw lastError;
       })();
     }
     return this.loadPromise;

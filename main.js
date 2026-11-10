@@ -239,7 +239,8 @@ let ovDetecting = false;
 function renderOvResults(results, latencyMs) {
   lastOvMs = latencyMs;
   updateLatencyCompare();
-  ovStatus.textContent = `柔軟検知中（推論 ${Math.round(latencyMs)} ms）`;
+  const backend = ovDetector.backend ? `・${ovDetector.backend}` : '';
+  ovStatus.textContent = `柔軟検知中（推論 ${Math.round(latencyMs)} ms${backend}）`;
   ovList.innerHTML = '';
   if (results.length === 0) {
     const li = document.createElement('li');
