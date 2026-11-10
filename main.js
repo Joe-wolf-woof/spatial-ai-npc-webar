@@ -38,6 +38,7 @@ const latencyCompare = document.getElementById('latency-compare');
 const ovToggle = document.getElementById('ov-toggle');
 const ovStatus = document.getElementById('ov-status');
 const ovList = document.getElementById('ov-list');
+const ovRunButton = document.getElementById('ov-run-button');
 
 const { renderer, scene, camera } = createScene(container);
 
@@ -158,7 +159,8 @@ autoVisionCheckbox.addEventListener('change', () => {
 // --- ローカル検知（COCO-SSD）：常時・即時、Geminiはトリガー時のみ ---
 const detector = new LocalDetector();
 const seenClasses = new Set();
-let detectTimer = null;
+let detectTimeoutId = null;
+let detectRunning = false;
 let detecting = false;
 let lastAutoTriggerAt = 0;
 const AUTO_TRIGGER_COOLDOWN_MS = 20000;
@@ -183,7 +185,7 @@ function renderDetections(predictions, latencyMs) {
 }
 
 async function detectionTick() {
-  if (detecting || !cameraManager.isRunning) return;
+  if (detecting || !cameraManager.isRunning || document.hidden) return;
   detecting = true;
   try {
     const { predictions, latencyMs } = await detector.detect(cameraVideo);
@@ -212,6 +214,24 @@ async function detectionTick() {
   }
 }
 
+/**
+ * 発熱対策：推論が重くなってきたら間隔を自動で広げる（適応間隔）。
+ * 端末のサーマルスロットリングを「推論msの悪化」で間接的に検知する考え方。
+ */
+function nextDetectDelay() {
+  if (lastLocalMs === null) return 1500;
+  if (lastLocalMs > 350) return 5000;
+  if (lastLocalMs > 250) return 3000;
+  return 1500;
+}
+
+async function detectionLoop() {
+  if (!detectRunning) return;
+  await detectionTick();
+  if (!detectRunning) return;
+  detectTimeoutId = setTimeout(detectionLoop, nextDetectDelay());
+}
+
 async function startDetection() {
   detectStatus.textContent = '検知モデルを読み込み中…（初回のみ数秒かかります）';
   try {
@@ -223,12 +243,13 @@ async function startDetection() {
   seenClasses.clear();
   detectStatus.textContent = '検知中…';
   stopDetection();
-  detectTimer = setInterval(detectionTick, 1500);
-  detectionTick();
+  detectRunning = true;
+  detectionLoop();
 }
 function stopDetection() {
-  if (detectTimer) clearInterval(detectTimer);
-  detectTimer = null;
+  detectRunning = false;
+  if (detectTimeoutId) clearTimeout(detectTimeoutId);
+  detectTimeoutId = null;
 }
 
 // --- 中間層：柔軟検知（OWL-ViT）— 自由ラベル、数秒間隔 ---
@@ -236,7 +257,7 @@ const ovDetector = new OpenVocabDetector();
 let ovTimer = null;
 let ovDetecting = false;
 
-function renderOvResults(results, latencyMs) {
+function renderOvResults(results, latencyMs, best) {
   lastOvMs = latencyMs;
   updateLatencyCompare();
   const backend = ovDetector.backend ? `・${ovDetector.backend}` : '';
@@ -246,6 +267,11 @@ function renderOvResults(results, latencyMs) {
     const li = document.createElement('li');
     li.textContent = '該当なし';
     ovList.appendChild(li);
+    if (best) {
+      const hint = document.createElement('li');
+      hint.textContent = `（参考）${best.ja} ${(best.score * 100).toFixed(0)}%`;
+      ovList.appendChild(hint);
+    }
     return;
   }
   for (const r of results) {
@@ -256,11 +282,11 @@ function renderOvResults(results, latencyMs) {
 }
 
 async function ovTick() {
-  if (ovDetecting || !cameraManager.isRunning) return;
+  if (ovDetecting || !cameraManager.isRunning || document.hidden) return;
   ovDetecting = true;
   try {
-    const { results, latencyMs } = await ovDetector.detect(cameraVideo);
-    renderOvResults(results, latencyMs);
+    const { results, best, latencyMs } = await ovDetector.detect(cameraVideo);
+    renderOvResults(results, latencyMs, best);
     const newOnes = results.filter((r) => !seenClasses.has(`ov:${r.en}`));
     newOnes.forEach((r) => seenClasses.add(`ov:${r.en}`));
     if (newOnes.length > 0) {
@@ -283,7 +309,8 @@ async function ovTick() {
 
 function startOvLoop() {
   stopOv();
-  ovTimer = setInterval(ovTick, 4000);
+  // 発熱対策：自動実行は15秒間隔に広げる（手動ボタンでも実行できる）
+  ovTimer = setInterval(ovTick, 15000);
   ovTick();
 }
 function stopOv() {
@@ -310,6 +337,22 @@ ovToggle.addEventListener('change', async () => {
   }
 });
 
+ovRunButton.addEventListener('click', async () => {
+  if (!cameraManager.isRunning) return;
+  ovRunButton.disabled = true;
+  try {
+    if (!ovDetector.isLoaded) {
+      ovToggle.checked = true;
+      await ovDetector.load((msg) => { ovStatus.textContent = msg; });
+    }
+    await ovTick();
+  } catch (err) {
+    ovStatus.textContent = `柔軟検知エラー: ${err.message}`;
+  } finally {
+    ovRunButton.disabled = false;
+  }
+});
+
 cameraToggleButton.addEventListener('click', async () => {
   if (cameraManager.isRunning) {
     cameraManager.stop();
@@ -317,6 +360,7 @@ cameraToggleButton.addEventListener('click', async () => {
     stopOv();
     ovToggle.checked = false;
     ovToggle.disabled = true;
+    ovRunButton.disabled = true;
     ovStatus.textContent = '柔軟検知はOFFです';
     ovList.innerHTML = '';
     document.body.classList.remove('camera-on');
@@ -337,6 +381,7 @@ cameraToggleButton.addEventListener('click', async () => {
     visionButton.disabled = false;
     autoVisionCheckbox.disabled = false;
     ovToggle.disabled = false;
+    ovRunButton.disabled = false;
     statusLine.textContent = 'カメラを開始しました。ローカル検知が常時動き、新しい物体のときだけGeminiに聞きます。';
     startDetection();
   } catch (err) {

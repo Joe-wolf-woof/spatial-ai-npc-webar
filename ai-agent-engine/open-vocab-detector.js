@@ -10,22 +10,22 @@
 const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2';
 const MODEL_ID = 'Xenova/owlvit-base-patch32';
 
-/** 部屋向けプリセットラベル（英語クエリ → 日本語表示）。 */
+/** 部屋向けプリセットラベル（英語クエリ → 日本語表示）。CLIP系は "a photo of ..." 形式が効く。 */
 export const PRESET_LABELS = [
-  { en: 'a potted plant', ja: '観葉植物' },
-  { en: 'a hanging plant', ja: '吊り下げ植物' },
-  { en: 'laundry hanging to dry', ja: '洗濯物' },
-  { en: 'a coffee cup', ja: 'コーヒーカップ' },
-  { en: 'a book', ja: '本' },
-  { en: 'a laptop computer', ja: 'ノートPC' },
-  { en: 'a person', ja: '人' },
-  { en: 'a chair', ja: '椅子' },
-  { en: 'a bed', ja: 'ベッド' },
-  { en: 'a cat', ja: '猫' },
-  { en: 'a dog', ja: '犬' },
+  { en: 'a photo of a potted plant', ja: '観葉植物' },
+  { en: 'a photo of a hanging plant', ja: '吊り下げ植物' },
+  { en: 'a photo of laundry hanging to dry', ja: '洗濯物' },
+  { en: 'a photo of a coffee cup', ja: 'コーヒーカップ' },
+  { en: 'a photo of a book', ja: '本' },
+  { en: 'a photo of a laptop computer', ja: 'ノートPC' },
+  { en: 'a photo of a person', ja: '人' },
+  { en: 'a photo of a chair', ja: '椅子' },
+  { en: 'a photo of a bed', ja: 'ベッド' },
+  { en: 'a photo of a cat', ja: '猫' },
+  { en: 'a photo of a dog', ja: '犬' },
 ];
 
-const SCORE_THRESHOLD = 0.10;
+const SCORE_THRESHOLD = 0.08;
 const FRAME_MAX_WIDTH = 640;
 
 export class OpenVocabDetector {
@@ -77,14 +77,16 @@ export class OpenVocabDetector {
 
   /**
    * video の現在フレームをプリセットラベルで検出する。
-   * @returns {{ results: Array<{en: string, ja: string, score: number}>, latencyMs: number }}
-   *          results はラベルごとの最高スコアのみ、スコア降順。
+   * @returns {{ results: Array<{en: string, ja: string, score: number}>,
+   *             best: {en: string, ja: string, score: number} | null, latencyMs: number }}
+   *          results は閾値以上・ラベルごとの最高スコアのみ（スコア降順）。
+   *          best は閾値未満でも最も近かったラベル（調整の手がかり用）。
    */
   async detect(video) {
     const detector = await this.load();
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    if (!vw || !vh) return { results: [], latencyMs: 0 };
+    if (!vw || !vh) return { results: [], best: null, latencyMs: 0 };
     const scale = Math.min(1, FRAME_MAX_WIDTH / vw);
     this.frameCanvas.width = Math.round(vw * scale);
     this.frameCanvas.height = Math.round(vh * scale);
@@ -98,16 +100,15 @@ export class OpenVocabDetector {
 
     const bestByLabel = new Map();
     for (const item of output) {
-      if (item.score < SCORE_THRESHOLD) continue;
       const prev = bestByLabel.get(item.label);
       if (!prev || item.score > prev.score) bestByLabel.set(item.label, item);
     }
-    const results = [...bestByLabel.values()]
-      .map((item) => {
-        const preset = PRESET_LABELS.find((l) => l.en === item.label);
-        return { en: item.label, ja: preset ? preset.ja : item.label, score: item.score };
-      })
-      .sort((a, b) => b.score - a.score);
-    return { results, latencyMs };
+    const toResult = (item) => {
+      const preset = PRESET_LABELS.find((l) => l.en === item.label);
+      return { en: item.label, ja: preset ? preset.ja : item.label, score: item.score };
+    };
+    const all = [...bestByLabel.values()].map(toResult).sort((a, b) => b.score - a.score);
+    const results = all.filter((r) => r.score >= SCORE_THRESHOLD);
+    return { results, best: all.length > 0 ? all[0] : null, latencyMs };
   }
 }
