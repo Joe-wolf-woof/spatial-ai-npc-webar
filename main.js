@@ -16,6 +16,7 @@ import {
   setApiKey,
 } from './ai-agent-engine/gemini-client.js';
 import { LocalDetector, labelJa } from './ai-agent-engine/local-detector.js';
+import { OpenVocabDetector } from './ai-agent-engine/open-vocab-detector.js';
 import { speak } from './ai-agent-engine/speech.js';
 import { MotionController } from './motion-controller/motion-controller.js';
 
@@ -34,6 +35,9 @@ const autoVisionCheckbox = document.getElementById('auto-vision');
 const detectStatus = document.getElementById('detect-status');
 const detectList = document.getElementById('detect-list');
 const latencyCompare = document.getElementById('latency-compare');
+const ovToggle = document.getElementById('ov-toggle');
+const ovStatus = document.getElementById('ov-status');
+const ovList = document.getElementById('ov-list');
 
 const { renderer, scene, camera } = createScene(container);
 
@@ -54,13 +58,16 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
-// --- 遅延の比較表示（仮説Aの検証データ） ---
+// --- 遅延の比較表示（3層カスケードの検証データ） ---
 let lastLocalMs = null;
+let lastOvMs = null;
 let lastGeminiMs = null;
+function fmtMs(v) {
+  return v !== null ? `${Math.round(v)} ms` : '-';
+}
 function updateLatencyCompare() {
-  const local = lastLocalMs !== null ? `ローカル検知: ${Math.round(lastLocalMs)} ms` : 'ローカル検知: -';
-  const gemini = lastGeminiMs !== null ? `Gemini応答: ${Math.round(lastGeminiMs)} ms` : 'Gemini応答: -';
-  latencyCompare.textContent = `${local} ／ ${gemini}（ベースライン実測 11,442 ms）`;
+  latencyCompare.textContent =
+    `COCO-SSD: ${fmtMs(lastLocalMs)} ／ OWL-ViT: ${fmtMs(lastOvMs)} ／ Gemini: ${fmtMs(lastGeminiMs)}（ベースライン実測 11,442 ms）`;
 }
 
 function showReply(reply, latencyMs) {
@@ -224,10 +231,93 @@ function stopDetection() {
   detectTimer = null;
 }
 
+// --- 中間層：柔軟検知（OWL-ViT）— 自由ラベル、数秒間隔 ---
+const ovDetector = new OpenVocabDetector();
+let ovTimer = null;
+let ovDetecting = false;
+
+function renderOvResults(results, latencyMs) {
+  lastOvMs = latencyMs;
+  updateLatencyCompare();
+  ovStatus.textContent = `柔軟検知中（推論 ${Math.round(latencyMs)} ms）`;
+  ovList.innerHTML = '';
+  if (results.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = '該当なし';
+    ovList.appendChild(li);
+    return;
+  }
+  for (const r of results) {
+    const li = document.createElement('li');
+    li.textContent = `${r.ja} ${(r.score * 100).toFixed(0)}%`;
+    ovList.appendChild(li);
+  }
+}
+
+async function ovTick() {
+  if (ovDetecting || !cameraManager.isRunning) return;
+  ovDetecting = true;
+  try {
+    const { results, latencyMs } = await ovDetector.detect(cameraVideo);
+    renderOvResults(results, latencyMs);
+    const newOnes = results.filter((r) => !seenClasses.has(`ov:${r.en}`));
+    newOnes.forEach((r) => seenClasses.add(`ov:${r.en}`));
+    if (newOnes.length > 0) {
+      motion.play('pointing');
+      const names = newOnes.map((r) => r.ja).join('、');
+      const now = Date.now();
+      if (!geminiBusy && now - lastAutoTriggerAt >= AUTO_TRIGGER_COOLDOWN_MS) {
+        lastAutoTriggerAt = now;
+        runVision(`（柔軟検知で「${names}」が新しく視界に入りました）`);
+      }
+    }
+  } catch (err) {
+    ovStatus.textContent = `柔軟検知エラー: ${err.message}`;
+    stopOv();
+    ovToggle.checked = false;
+  } finally {
+    ovDetecting = false;
+  }
+}
+
+function startOvLoop() {
+  stopOv();
+  ovTimer = setInterval(ovTick, 4000);
+  ovTick();
+}
+function stopOv() {
+  if (ovTimer) clearInterval(ovTimer);
+  ovTimer = null;
+}
+
+ovToggle.addEventListener('change', async () => {
+  if (!ovToggle.checked) {
+    stopOv();
+    ovStatus.textContent = '柔軟検知はOFFです';
+    return;
+  }
+  ovToggle.disabled = true;
+  try {
+    await ovDetector.load((msg) => { ovStatus.textContent = msg; });
+    ovStatus.textContent = '柔軟検知を開始します…';
+    startOvLoop();
+  } catch (err) {
+    ovStatus.textContent = `柔軟検知を読み込めませんでした: ${err.message}`;
+    ovToggle.checked = false;
+  } finally {
+    ovToggle.disabled = false;
+  }
+});
+
 cameraToggleButton.addEventListener('click', async () => {
   if (cameraManager.isRunning) {
     cameraManager.stop();
     stopDetection();
+    stopOv();
+    ovToggle.checked = false;
+    ovToggle.disabled = true;
+    ovStatus.textContent = '柔軟検知はOFFです';
+    ovList.innerHTML = '';
     document.body.classList.remove('camera-on');
     cameraToggleButton.textContent = 'カメラを開始';
     visionButton.disabled = true;
@@ -245,6 +335,7 @@ cameraToggleButton.addEventListener('click', async () => {
     cameraToggleButton.textContent = 'カメラを停止';
     visionButton.disabled = false;
     autoVisionCheckbox.disabled = false;
+    ovToggle.disabled = false;
     statusLine.textContent = 'カメラを開始しました。ローカル検知が常時動き、新しい物体のときだけGeminiに聞きます。';
     startDetection();
   } catch (err) {

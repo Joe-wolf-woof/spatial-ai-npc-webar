@@ -42,7 +42,8 @@ main { padding: 12px 20px 24px; max-width: 960px; margin: 0 auto; }
 }
 #detect-panel h3 { margin: 0 0 6px; font-size: 14px; color: #9fd0a5; }
 #detect-status { font-size: 13px; color: #cfe3d3; min-height: 18px; }
-#detect-list {
+#ov-status { font-size: 13px; color: #d9cfe8; min-height: 18px; }
+#detect-list, #ov-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -50,7 +51,7 @@ main { padding: 12px 20px 24px; max-width: 960px; margin: 0 auto; }
   margin: 8px 0;
   padding: 0;
 }
-#detect-list li {
+#detect-list li, #ov-list li {
   background: #27324a;
   border-radius: 999px;
   padding: 2px 10px;

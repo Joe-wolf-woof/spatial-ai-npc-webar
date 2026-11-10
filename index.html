@@ -17,7 +17,7 @@
 <body>
   <header>
     <h1>Spatial AI NPC</h1>
-    <p class="subtitle">物理空間を認識して自律行動する WebAR エージェント（Phase 3: ハイブリッド化）</p>
+    <p class="subtitle">物理空間を認識して自律行動する WebAR エージェント（Phase 3: 3層ハイブリッド化）</p>
   </header>
 
   <main>
@@ -33,12 +33,18 @@
       <label class="auto-label">
         <input type="checkbox" id="auto-vision" disabled /> 10秒ごとに自動で見る
       </label>
+      <label class="auto-label">
+        <input type="checkbox" id="ov-toggle" disabled /> 柔軟検知（OWL-ViT）も使う
+      </label>
     </section>
 
     <section id="detect-panel">
       <h3>ローカル検知（端末内・即時）</h3>
       <div id="detect-status">カメラ開始後に自動で始まります</div>
       <ul id="detect-list"></ul>
+      <h3>柔軟検知（OWL-ViT・自由ラベル）</h3>
+      <div id="ov-status">柔軟検知はOFFです</div>
+      <ul id="ov-list"></ul>
       <div id="latency-compare"></div>
     </section>
 
