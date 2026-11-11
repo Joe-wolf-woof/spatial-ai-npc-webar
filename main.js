@@ -135,8 +135,11 @@ function loop(now) {
     }
   }
 
-  // 歩行中は脚を振る（脚パーツのあるモデルだけ。対角の脚を同じ位相にする）
-  const legs = motion.avatar?.parts?.legs;
+  // クリップ付きGLBは Walk クリップで歩く
+  motion.setLocomotion(moving);
+
+  // 歩行中は脚を振る（脚パーツのあるクリップなしモデルだけ。対角の脚を同じ位相にする）
+  const legs = motion.avatar?.mixer ? null : motion.avatar?.parts?.legs;
   if (legs) {
     const swing = Math.sin(now / 85) * 0.55;
     for (const [key, leg] of Object.entries(legs)) {

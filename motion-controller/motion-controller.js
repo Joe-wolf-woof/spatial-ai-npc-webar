@@ -17,13 +17,32 @@ const CLIP_KEYWORDS = {
   happy: ['happy', 'joy', 'jump', 'celebrat', 'excit', 'dance', 'play'],
   thinking: ['think', 'confus', 'question'],
   pointing: ['point', 'show', 'present', 'wave', 'reach'],
+  walk: ['walk'],
 };
+
+// クリップ名（小文字・プレフィックス除去後）の完全一致を優先する対応表。
+// Quaternius の Wolf のように、感情名を含まないクリップでも意図した動きを割り当てるため。
+const CLIP_EXACT = {
+  idle: ['idle', 'idle_2'],
+  happy: ['jump_toidle', 'eating', 'idle_2'],
+  thinking: ['idle_2_headlow', 'idle_2'],
+  pointing: ['idle_2', 'idle'],
+  walk: ['walk'],
+};
+
+// キーワード検索から除外するクリップ（反応・死亡・攻撃系は感情表現に使わない）
+const CLIP_EXCLUDE = ['hitreact', 'death', 'attack'];
+
+function clipBaseName(name) {
+  return name.toLowerCase().split('|').pop();
+}
 
 export class MotionController {
   constructor(avatar) {
     this.current = { emotion: 'idle', startedAt: performance.now() };
     this.lastUpdate = performance.now();
     this.activeAction = null;
+    this.locomotion = false;
     this.setAvatar(avatar);
   }
 
@@ -31,6 +50,7 @@ export class MotionController {
   setAvatar(avatar) {
     this.avatar = avatar;
     this.activeAction = null;
+    this.locomotion = false;
     const idle = this.findClip('idle');
     if (idle) {
       idle.play();
@@ -41,10 +61,15 @@ export class MotionController {
   findClip(emotion) {
     const actions = this.avatar?.actions;
     if (!actions || Object.keys(actions).length === 0) return null;
+    const entries = Object.entries(actions).map(([name, action]) => [clipBaseName(name), action]);
+    for (const cand of CLIP_EXACT[emotion] || []) {
+      const hit = entries.find(([n]) => n === cand);
+      if (hit) return hit[1];
+    }
     const keys = CLIP_KEYWORDS[emotion] || [];
-    for (const name of Object.keys(actions)) {
-      const n = name.toLowerCase();
-      if (keys.some((k) => n.includes(k))) return actions[name];
+    for (const [n, action] of entries) {
+      if (CLIP_EXCLUDE.some((x) => n.includes(x))) continue;
+      if (keys.some((k) => n.includes(k))) return action;
     }
     return null;
   }
@@ -52,12 +77,28 @@ export class MotionController {
   play(emotion) {
     this.current = { emotion, startedAt: performance.now() };
     if (this.avatar?.mixer) {
+      if (this.locomotion) return; // 歩行中は感情だけ記録し、クリップ切替は到着後に任せる
       const next = this.findClip(emotion) || this.findClip('idle');
       if (next && next !== this.activeAction) {
         next.reset().fadeIn(0.25).play();
         if (this.activeAction) this.activeAction.fadeOut(0.25);
         this.activeAction = next;
       }
+    }
+  }
+
+  /** 移動中は Walk クリップ、止まったら現在の感情クリップへ戻す（クリップ付きGLB用） */
+  setLocomotion(walking) {
+    if (!this.avatar?.mixer) return;
+    if (walking === this.locomotion) return;
+    this.locomotion = walking;
+    const target = walking
+      ? this.findClip('walk')
+      : this.findClip(this.current.emotion) || this.findClip('idle');
+    if (target && target !== this.activeAction) {
+      target.reset().fadeIn(0.2).play();
+      if (this.activeAction) this.activeAction.fadeOut(0.2);
+      this.activeAction = target;
     }
   }
 
@@ -107,14 +148,15 @@ export class MotionController {
     const { group, parts } = this.avatar;
     const emotion = this.current.emotion;
     // 感情に合うクリップが再生中なら、モデル全体の動きはクリップに任せる
-    const clipDriven = !!this.findClip(emotion);
+    const clipDriven = !!this.findClip(emotion) || this.locomotion;
 
     const t = Math.min((now - this.current.startedAt) / DURATION_MS, 1);
     const wave = Math.sin(t * Math.PI);
 
     group.position.y = 0;
     group.rotation.set(0, 0, 0);
-    if (parts.head) parts.head.rotation.set(0, 0, 0);
+    // スキニングモデルでは頭ボーンを触るとクリップの動きと競合するため、クリップなしモデルのみ
+    if (!this.avatar.mixer && parts.head) parts.head.rotation.set(0, 0, 0);
 
     if (!clipDriven) {
       switch (emotion) {
