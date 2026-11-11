@@ -5,7 +5,11 @@
  *  - カメラ映像を端末内の COCO-SSD で常時検知し、結果と推論msを即表示する
  *  - 新しい物体クラスが現れたら、そのときだけ Gemini に画像を送って声かけさせる
  *  - ローカル検知ms と Gemini応答ms を並べて表示し、before/after を比較できるようにする
+ * Phase 3-B（実モデル対応）：GLBを読み込んで正規化し、感情モーションで動かす
+ * Phase 3-C（接地・仮説B）：ステージをタップすると Raycast で地面の位置を求め、
+ *  アバターがその位置へ移動する（影と遠近で接地感を表現する）
  */
+import * as THREE from 'three';
 import { createScene, tryLoadAvatarModel } from './ar-viewer/scene.js';
 import { createPlaceholderAvatar, createGlbAvatar } from './ar-viewer/avatar.js';
 import { CameraManager } from './ar-viewer/camera.js';
@@ -42,15 +46,20 @@ const ovRunButton = document.getElementById('ov-run-button');
 
 const { renderer, scene, camera } = createScene(container);
 
+// 配置用アンカー（Phase 3-C）：タップ配置で動かすのは外側のこのグループ。
+// 感情モーションは内側のアバター本体に掛かるため競合しない。
+const anchor = new THREE.Group();
+scene.add(anchor);
+
 const placeholder = createPlaceholderAvatar();
-scene.add(placeholder.group);
+anchor.add(placeholder.group);
 const motion = new MotionController(placeholder);
 
 tryLoadAvatarModel().then((gltf) => {
   if (!gltf) return;
   const glbAvatar = createGlbAvatar(gltf);
-  scene.remove(placeholder.group);
-  scene.add(glbAvatar.group);
+  anchor.remove(placeholder.group);
+  anchor.add(glbAvatar.group);
   motion.setAvatar(glbAvatar);
   const clipCount = gltf.animations ? gltf.animations.length : 0;
   statusLine.textContent = clipCount > 0
@@ -58,7 +67,78 @@ tryLoadAvatarModel().then((gltf) => {
     : 'GLBモデルを読み込みました（アニメーションなし：プロシージャルモーションで動かします）。';
 });
 
+// --- 接地（Phase 3-C）：タップした地面の位置へアバターが移動する ---
+const raycaster = new THREE.Raycaster();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const placeTarget = new THREE.Vector3();
+let hasPlaceTarget = false;
+
+// タップ位置に一瞬出すリングマーカー
+const marker = new THREE.Mesh(
+  new THREE.RingGeometry(0.16, 0.22, 40),
+  new THREE.MeshBasicMaterial({
+    color: 0xffd166, transparent: true, opacity: 0,
+    side: THREE.DoubleSide, depthWrite: false,
+  })
+);
+marker.rotation.x = -Math.PI / 2;
+scene.add(marker);
+let markerShownAt = -Infinity;
+
+container.addEventListener('pointerdown', (ev) => {
+  const rect = container.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+    -((ev.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  raycaster.setFromCamera(ndc, camera);
+  const hit = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(groundPlane, hit)) return;
+  hit.x = THREE.MathUtils.clamp(hit.x, -2.0, 2.0);
+  hit.z = THREE.MathUtils.clamp(hit.z, -1.2, 1.8);
+  placeTarget.copy(hit);
+  hasPlaceTarget = true;
+  marker.position.set(hit.x, 0.01, hit.z);
+  markerShownAt = performance.now();
+  statusLine.textContent = 'タップした位置へ移動します。';
+});
+
+/** 角度の最短差分で滑らかに近づける */
+function dampAngle(current, target, lambda, dt) {
+  let diff = (target - current) % (Math.PI * 2);
+  if (diff > Math.PI) diff -= Math.PI * 2;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return current + diff * (1 - Math.exp(-lambda * dt));
+}
+
+let lastLoopAt = performance.now();
 function loop(now) {
+  const dt = Math.min((now - lastLoopAt) / 1000, 0.05);
+  lastLoopAt = now;
+
+  if (hasPlaceTarget) {
+    const dx = placeTarget.x - anchor.position.x;
+    const dz = placeTarget.z - anchor.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 0.03) {
+      const step = Math.min(dist, 2.4 * dt);
+      anchor.position.x += (dx / dist) * step;
+      anchor.position.z += (dz / dist) * step;
+      anchor.rotation.y = dampAngle(anchor.rotation.y, Math.atan2(dx, dz), 12, dt);
+    } else {
+      anchor.rotation.y = dampAngle(anchor.rotation.y, 0, 6, dt); // 着いたら正面へ
+    }
+  }
+
+  const mt = (now - markerShownAt) / 900;
+  if (mt < 1) {
+    marker.material.opacity = 0.9 * (1 - mt);
+    const s = 1 + mt * 0.9;
+    marker.scale.set(s, s, 1);
+  } else {
+    marker.material.opacity = 0;
+  }
+
   motion.update(now);
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
