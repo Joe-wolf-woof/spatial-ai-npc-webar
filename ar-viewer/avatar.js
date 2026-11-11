@@ -2,10 +2,49 @@ import * as THREE from 'three';
 
 /**
  * ar-viewer/avatar.js
- * プレースホルダーアバター（プリミティブ合成）。
- * 実モデル（GLTF）が用意できたら scene.js の tryLoadAvatarModel に差し替える。
- * motion-controller はこのオブジェクトの parts を前提に動かす。
+ * プレースホルダーアバター（プリミティブ合成）と、実モデル（GLB）の取り込み。
+ * 実モデルは createGlbAvatar で正規化し、motion-controller が扱える形に揃える。
  */
+
+/**
+ * GLBモデルをアバターとして使える形に整える（Phase 3-B）。
+ * - スケール正規化：最大寸法が約1.5mになるよう拡縮し、底面を y=0、XZ中心を原点へ
+ * - 名前付きパーツ（Head / Tail）を探し、プロシージャルモーションに使う
+ * - アニメーションクリップがあれば AnimationMixer とクリップ表を用意する
+ */
+export function createGlbAvatar(gltf) {
+  const inner = gltf.scene;
+
+  const box = new THREE.Box3().setFromObject(inner);
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  inner.scale.setScalar(1.5 / maxDim);
+  const box2 = new THREE.Box3().setFromObject(inner);
+  inner.position.x -= (box2.min.x + box2.max.x) / 2;
+  inner.position.z -= (box2.min.z + box2.max.z) / 2;
+  inner.position.y -= box2.min.y;
+
+  const group = new THREE.Group();
+  group.add(inner);
+
+  const parts = {};
+  inner.traverse((obj) => {
+    const n = (obj.name || '').toLowerCase();
+    if (!parts.head && /(^|[^a-z])head/.test(n)) parts.head = obj;
+    if (!parts.tail && n.includes('tail')) parts.tail = obj;
+  });
+
+  let mixer = null;
+  const actions = {};
+  if (gltf.animations && gltf.animations.length > 0) {
+    mixer = new THREE.AnimationMixer(inner);
+    for (const clip of gltf.animations) {
+      actions[clip.name] = mixer.clipAction(clip);
+    }
+  }
+
+  return { group, inner, parts, mixer, actions, isGlb: true };
+}
 export function createPlaceholderAvatar() {
   const group = new THREE.Group();
 

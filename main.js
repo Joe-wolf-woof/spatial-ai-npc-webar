@@ -7,7 +7,7 @@
  *  - ローカル検知ms と Gemini応答ms を並べて表示し、before/after を比較できるようにする
  */
 import { createScene, tryLoadAvatarModel } from './ar-viewer/scene.js';
-import { createPlaceholderAvatar } from './ar-viewer/avatar.js';
+import { createPlaceholderAvatar, createGlbAvatar } from './ar-viewer/avatar.js';
 import { CameraManager } from './ar-viewer/camera.js';
 import {
   generateReply,
@@ -46,10 +46,16 @@ const placeholder = createPlaceholderAvatar();
 scene.add(placeholder.group);
 const motion = new MotionController(placeholder);
 
-tryLoadAvatarModel(scene).then((model) => {
-  if (!model) return;
+tryLoadAvatarModel().then((gltf) => {
+  if (!gltf) return;
+  const glbAvatar = createGlbAvatar(gltf);
   scene.remove(placeholder.group);
-  statusLine.textContent = 'GLTFモデル（assets/models/avatar.glb）を読み込みました。';
+  scene.add(glbAvatar.group);
+  motion.setAvatar(glbAvatar);
+  const clipCount = gltf.animations ? gltf.animations.length : 0;
+  statusLine.textContent = clipCount > 0
+    ? `GLBモデルを読み込みました（アニメーション ${clipCount} 本）。`
+    : 'GLBモデルを読み込みました（アニメーションなし：プロシージャルモーションで動かします）。';
 });
 
 function loop(now) {

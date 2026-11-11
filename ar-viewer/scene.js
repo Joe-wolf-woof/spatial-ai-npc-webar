@@ -55,17 +55,18 @@ export function createScene(container) {
 
 /**
  * 外部GLTFモデルを読み込む（assets/models/avatar.glb を置けば自動で差し替わる）。
+ * 戻り値は gltf オブジェクト全体（scene と animations を含む）。
+ * シーンへの追加と正規化は avatar.js の createGlbAvatar が担当する。
  * 読み込めない場合は null を返し、プレースホルダーアバターで継続する。
  */
-export async function tryLoadAvatarModel(scene, url = './assets/models/avatar.glb') {
+export async function tryLoadAvatarModel(url = './assets/models/avatar.glb') {
   const loader = new GLTFLoader();
   try {
     const gltf = await loader.loadAsync(url);
     gltf.scene.traverse((obj) => {
       if (obj.isMesh) obj.castShadow = true;
     });
-    scene.add(gltf.scene);
-    return gltf.scene;
+    return gltf;
   } catch {
     return null;
   }
