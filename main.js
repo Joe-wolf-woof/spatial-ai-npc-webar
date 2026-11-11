@@ -93,7 +93,10 @@ container.addEventListener('pointerdown', (ev) => {
   );
   raycaster.setFromCamera(ndc, camera);
   const hit = new THREE.Vector3();
-  if (!raycaster.ray.intersectPlane(groundPlane, hit)) return;
+  if (!raycaster.ray.intersectPlane(groundPlane, hit)) {
+    // 地面と交わらない上方向のタップでも、奥の端に置くことで必ず反応させる
+    hit.set(ndc.x * 2.4, 0, -1.2);
+  }
   hit.x = THREE.MathUtils.clamp(hit.x, -2.0, 2.0);
   hit.z = THREE.MathUtils.clamp(hit.z, -1.2, 1.8);
   placeTarget.copy(hit);
@@ -116,12 +119,14 @@ function loop(now) {
   const dt = Math.min((now - lastLoopAt) / 1000, 0.05);
   lastLoopAt = now;
 
+  let moving = false;
   if (hasPlaceTarget) {
     const dx = placeTarget.x - anchor.position.x;
     const dz = placeTarget.z - anchor.position.z;
     const dist = Math.hypot(dx, dz);
     if (dist > 0.03) {
-      const step = Math.min(dist, 2.4 * dt);
+      moving = true;
+      const step = Math.min(dist, 3.0 * dt);
       anchor.position.x += (dx / dist) * step;
       anchor.position.z += (dz / dist) * step;
       anchor.rotation.y = dampAngle(anchor.rotation.y, Math.atan2(dx, dz), 12, dt);
@@ -130,7 +135,18 @@ function loop(now) {
     }
   }
 
-  const mt = (now - markerShownAt) / 900;
+  // 歩行中は脚を振る（脚パーツのあるモデルだけ。対角の脚を同じ位相にする）
+  const legs = motion.avatar?.parts?.legs;
+  if (legs) {
+    const swing = Math.sin(now / 85) * 0.55;
+    for (const [key, leg] of Object.entries(legs)) {
+      const base = leg.userData.baseRotationX || 0;
+      const target = base + (moving ? (key === 'fl' || key === 'br' ? swing : -swing) : 0);
+      leg.rotation.x += (target - leg.rotation.x) * 0.5;
+    }
+  }
+
+  const mt = (now - markerShownAt) / 1400;
   if (mt < 1) {
     marker.material.opacity = 0.9 * (1 - mt);
     const s = 1 + mt * 0.9;

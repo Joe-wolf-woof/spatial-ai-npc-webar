@@ -15,6 +15,29 @@ import * as THREE from 'three';
 export function createGlbAvatar(gltf) {
   const inner = gltf.scene;
 
+  // 向きの自動補正：頭のある方向が +Z（カメラ正面）を向くよう、必要ならモデルを回す。
+  // モデルごとに「前」の定義や書き出し時の軸が違っても、頭の位置から機械的にそろえる。
+  inner.updateMatrixWorld(true);
+  let headObj = null;
+  inner.traverse((obj) => {
+    const n = (obj.name || '').toLowerCase();
+    if (!headObj && /(^|[^a-z])head/.test(n)) headObj = obj;
+  });
+  if (headObj) {
+    const sceneBox = new THREE.Box3().setFromObject(inner);
+    const center = sceneBox.getCenter(new THREE.Vector3());
+    const hp = new THREE.Vector3();
+    headObj.getWorldPosition(hp);
+    const dx = hp.x - center.x;
+    const dz = hp.z - center.z;
+    if (Math.abs(dx) > Math.abs(dz)) {
+      inner.rotation.y = dx > 0 ? -Math.PI / 2 : Math.PI / 2;
+    } else if (dz < 0) {
+      inner.rotation.y = Math.PI;
+    }
+    inner.updateMatrixWorld(true);
+  }
+
   const box = new THREE.Box3().setFromObject(inner);
   const size = box.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
@@ -32,6 +55,17 @@ export function createGlbAvatar(gltf) {
     const n = (obj.name || '').toLowerCase();
     if (!parts.head && /(^|[^a-z])head/.test(n)) parts.head = obj;
     if (!parts.tail && n.includes('tail')) parts.tail = obj;
+    // 脚（歩行アニメーション用）：LegFL のような名前や front-left 等から4本を拾う
+    const legKey = (n.match(/leg[-_ ]?(fl|fr|bl|br)/) || [])[1]
+      || (n.includes('leg') && n.includes('front') && n.includes('left') ? 'fl' : null)
+      || (n.includes('leg') && n.includes('front') && n.includes('right') ? 'fr' : null)
+      || (n.includes('leg') && (n.includes('back') || n.includes('rear')) && n.includes('left') ? 'bl' : null)
+      || (n.includes('leg') && (n.includes('back') || n.includes('rear')) && n.includes('right') ? 'br' : null);
+    if (legKey) {
+      parts.legs = parts.legs || {};
+      parts.legs[legKey] = obj;
+      obj.userData.baseRotationX = obj.rotation.x;
+    }
   });
 
   let mixer = null;
